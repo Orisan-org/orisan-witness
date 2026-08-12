@@ -1,0 +1,8 @@
+node_modules
+dist
+data
+test
+*.db
+*.db-*
+witness-signing.key
+.git

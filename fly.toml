@@ -1,0 +1,45 @@
+# Fly.io configuration for the Orisan witness.
+#
+# ONE MACHINE, DELIBERATELY. The store is SQLite on a volume: two machines
+# would mean two divergent witnesses, which is worse than none — a customer
+# checking a head could get either answer. Horizontal scale needs Postgres or
+# a consensus layer, and that is a v2 decision, not a config flag.
+
+app = "orisan-witness"
+primary_region = "lhr"
+
+[build]
+  dockerfile = "Dockerfile"
+
+[env]
+  PORT = "8080"
+  WITNESS_DB = "/data/witness.db"
+  WITNESS_KEY = "/data/witness-signing.key"
+
+[[mounts]]
+  source = "witness_data"
+  destination = "/data"
+
+[http_service]
+  internal_port = 8080
+  force_https = true
+  # Never scale to zero and never add a second machine: see the note above.
+  auto_stop_machines = false
+  auto_start_machines = false
+  min_machines_running = 1
+
+  [http_service.concurrency]
+    type = "requests"
+    soft_limit = 200
+    hard_limit = 400
+
+[[http_service.checks]]
+  interval = "30s"
+  timeout = "3s"
+  grace_period = "10s"
+  method = "GET"
+  path = "/health"
+
+[[vm]]
+  size = "shared-cpu-1x"
+  memory = "512mb"
