@@ -1,0 +1,8 @@
+node_modules/
+dist/
+*.tsbuildinfo
+.DS_Store
+data/
+*.db
+*.db-*
+witness-signing.key
