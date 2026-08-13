@@ -75,6 +75,38 @@ needs Postgres or a consensus layer; that is a v2 decision, not a config flag.
 
 Then publish that PEM at a stable URL so auditors can pin it independently.
 
+### Custom domain
+
+The certificate for `witness.orisan.org` is created. It stays **Not verified**
+until DNS resolves, and the hostname will not serve traffic before then.
+
+`orisan.org` is on Namecheap (`dns1/dns2.registrar-servers.com`). Add ONE of
+these in Namecheap → Domain List → Manage → Advanced DNS:
+
+**CNAME (use this one).** A subdomain should be a CNAME: it follows Fly if the
+underlying addresses ever change, and the IPv4 below is a *shared* Fly address
+rather than one allocated to this app.
+
+    Type   Host      Value                                   TTL
+    CNAME  witness   320welg.orisan-witness.fly.dev.         Automatic
+
+**A + AAAA (Fly's default suggestion).** Works, but pins two addresses that Fly
+may rotate:
+
+    A      witness   66.241.125.17
+    AAAA   witness   2a09:8280:1::16a:3a9f:0
+
+Note `www` already uses a CNAME to Vercel, so the zone is CNAME-friendly.
+
+Then:
+
+    fly certs check witness.orisan.org      # issues once DNS resolves
+    curl https://witness.orisan.org/health
+
+Nothing pinned in a recorder changes by adding DNS. A registered log keeps
+talking to whatever URL it pinned; moving it is a deliberate act, via
+`orisan-rec witness repoint`.
+
 ### Backups
 
 A daily in-process backup runs via SQLite's online backup API (copying a
