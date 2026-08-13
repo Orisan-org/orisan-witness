@@ -25,8 +25,13 @@ primary_region = "lhr"
   force_https = true
   # Never scale to zero and never add a second machine: see the note above.
   auto_stop_machines = false
-  auto_start_machines = false
   min_machines_running = 1
+  # auto_start is ON while auto_stop is OFF. It is a no-op while the machine is
+  # up, and the recovery path if it is ever stopped by a host migration, a
+  # failed deploy or a stray `fly machine stop`. With it off, a stopped witness
+  # stays unreachable until a human notices — and an unreachable witness means
+  # every customer's verify returns exit 2.
+  auto_start_machines = true
 
   [http_service.concurrency]
     type = "requests"
