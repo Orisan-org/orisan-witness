@@ -59,6 +59,14 @@ export interface Receipt {
   witness_signature: string;
 }
 
+/** What the witness signs per stored checkpoint. Re-checked on restore. */
+export function receiptSignedPayload(r: Omit<Receipt, 'witness_signature'>): unknown {
+  return {
+    log_id: r.log_id, index: r.index, seq_from: r.seq_from, seq_to: r.seq_to,
+    merkle_root: r.merkle_root, witnessed_at: r.witnessed_at,
+  };
+}
+
 export interface Head {
   log_id: string;
   latest_index: number;
@@ -177,10 +185,10 @@ export class WitnessService {
     }
 
     const witnessed_at = this.now().toISOString();
-    const witness_signature = signPayload(this.key, {
+    const witness_signature = signPayload(this.key, receiptSignedPayload({
       log_id: logId, index: req.index, seq_from: req.seq_from, seq_to: req.seq_to,
       merkle_root: req.merkle_root, witnessed_at,
-    });
+    }));
 
     const base: Omit<CheckpointRow, 'row_hash'> = {
       log_id: logId,

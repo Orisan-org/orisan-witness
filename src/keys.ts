@@ -19,8 +19,53 @@ export interface WitnessKey {
   publicKeyPem: string;
 }
 
-export function loadOrCreateKey(path: string): WitnessKey {
+/**
+ * Load the witness signing key, preferring an injected secret over the volume.
+ *
+ * WHY THE ENV PATH EXISTS. The key used to live only at /data/witness-signing.key,
+ * on the same Fly volume as the database. Losing that volume lost the identity
+ * as well as the history — and restoring the history under a NEW key produces a
+ * witness that every client rejects with key_mismatch, because clients pin the
+ * key at registration. So the backup work is worthless without somewhere else
+ * for the key to live. WITNESS_KEY_PEM is that somewhere: a Fly secret, stored
+ * off the machine, injected at boot, never written to disk.
+ *
+ * Accepts a PEM directly or base64 of one, because a private key with real
+ * newlines is awkward to pass through a secrets CLI intact.
+ *
+ * If a secret and an on-disk key are both present and DIFFER, this throws.
+ * Silently preferring one would change the witness's identity based on
+ * deployment order, which is the failure this function exists to prevent.
+ */
+export function loadKeyFromPem(pem: string): WitnessKey {
+  const text = pem.includes('BEGIN') ? pem : Buffer.from(pem.trim(), 'base64').toString('utf8');
+  if (!text.includes('BEGIN')) throw new Error('WITNESS_KEY_PEM is neither a PEM nor base64 of one');
+  const privateKey = createPrivateKey(text);
+  if (privateKey.asymmetricKeyType !== 'ed25519') {
+    throw new Error(`WITNESS_KEY_PEM is ${privateKey.asymmetricKeyType ?? 'unknown'}, expected ed25519`);
+  }
+  return { privateKey, publicKeyPem: createPublicKey(privateKey).export({ type: 'spki', format: 'pem' }).toString() };
+}
+
+export function loadOrCreateKey(path: string, env: NodeJS.ProcessEnv = process.env): WitnessKey {
   const p = resolve(path);
+
+  const secret = env['WITNESS_KEY_PEM'];
+  if (secret && secret.trim()) {
+    const fromSecret = loadKeyFromPem(secret);
+    if (existsSync(p)) {
+      const onDisk = createPublicKey(createPrivateKey(readFileSync(p, 'utf8')))
+        .export({ type: 'spki', format: 'pem' }).toString();
+      if (onDisk.trim() !== fromSecret.publicKeyPem.trim()) {
+        throw new Error(
+          `WITNESS_KEY_PEM and ${p} are different keys. Refusing to guess which identity this witness has; `
+          + 'remove one of them.',
+        );
+      }
+    }
+    return fromSecret;
+  }
+
   if (existsSync(p)) {
     const mode = statSync(p).mode & 0o777;
     if (process.platform !== 'win32' && (mode & 0o077) !== 0) {

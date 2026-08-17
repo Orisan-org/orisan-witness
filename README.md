@@ -107,20 +107,101 @@ Nothing pinned in a recorder changes by adding DNS. A registered log keeps
 talking to whatever URL it pinned; moving it is a deliberate act, via
 `orisan-rec witness repoint`.
 
-### Backups
+### Backups and restore
 
-A daily in-process backup runs via SQLite's online backup API (copying a
-WAL-mode file out from under a live writer can produce something that will not
-open). Fourteen are retained; an unbounded backup directory fills the volume and
-takes the service down with it.
+Backups go to **Tigris object storage**, a different failure domain from the
+Fly volume the database lives on. `fly storage create` injects the AWS_*
+credentials and BUCKET_NAME as secrets; the service needs no further
+configuration.
 
-**These backups are on the same volume as the database.** That protects against
-corruption and mistakes, not against losing the volume. Off-box copies are a v2
-item, and until they exist nobody should call this disaster recovery.
+Each run writes three objects:
 
-    fly ssh console -C "ls -la /data/backups"
+    witness/<stamp>/witness.db      SQLite online-backup snapshot
+    witness/<stamp>/manifest.json   digest, row counts, every log's head — signed
+    witness/latest.json             pointer, written LAST
+
+The pointer is written last on purpose, so it never names a half-uploaded
+backup. Fourteen stamps are retained. The snapshot is staged in the system temp
+directory, never on the data volume, and removed whatever happens.
+
+Two things a plain `aws s3 cp` would not do:
+
+- The manifest is **signed by the witness key**. Whoever controls the bucket can
+  delete objects, but cannot forge a manifest that claims a different history.
+- The run **reads the object back** and compares digests before recording
+  success. A backup nobody has ever read is a hypothesis.
+
+If no destination is configured the service backs up **nothing** and says so.
+It deliberately does not fall back to the data volume, because that would look
+healthy while rebuilding the single point of failure this replaced.
+
+#### Restore
+
+    AWS_ACCESS_KEY_ID=... AWS_SECRET_ACCESS_KEY=... AWS_ENDPOINT_URL_S3=... \
+    BUCKET_NAME=orisan-witness-backups \
+    node dist/index.js restore --to ./restored --from latest \
+      --expect-pubkey witness-pubkey.pem
+
+Ten checks run, and the command exits non-zero if any fails: manifest format,
+manifest signature under the **pinned** key, database digest, SQLite
+`integrity_check`, the append-only triggers still being present, checkpoint and
+conflict row counts, the set of logs, every log's self-chain, every head against
+the manifest, and every checkpoint's witness signature.
+
+`--expect-pubkey` is what makes the signature check mean anything. Without it
+the manifest only vouches for itself.
+
+`test/restore.test.ts` runs this whole drill on every test run: it starts a real
+witness, writes real checkpoints, **deletes the entire data volume**, restores
+from the backup and asserts the new process answers every head byte for byte as
+the destroyed one did.
+
+#### The signing key must outlive the volume
+
+The witness identity is an Ed25519 key at `/data/witness-signing.key` — on the
+volume. Losing the volume loses the key as well as the database, and restoring
+the history under a fresh key produces a witness that every client rejects with
+`key_mismatch`, because clients pin the key at registration. The rows would all
+be there and be worthless.
+
+So the key belongs in a Fly secret, which lives off the machine:
+
+    fly ssh console -a orisan-witness -C "base64 -w0 /data/witness-signing.key" \
+      | tr -d '\r\n' \
+      | xargs -I{} fly secrets set WITNESS_KEY_PEM={} -a orisan-witness
+
+`WITNESS_KEY_PEM` takes precedence over the file and is never written to disk.
+If both are present and **differ**, the service refuses to start rather than
+silently picking an identity based on deployment order.
+
+### Knowing when backups stop
+
+The failure this guards against is silence — a backup loop that throws into a
+log nobody reads, or a machine that is simply gone. Two signals, deliberately of
+opposite kinds:
+
+**`GET /v1/backup-status`** — 200 when healthy, **503** when the last success is
+older than `WITNESS_BACKUP_MAX_AGE_SECONDS` (default 26h), when the last run
+failed, when the destination is on the data volume, or when nothing is
+configured. The body names the reason. Failures are also logged with
+`"alert": true` for a log-drain filter.
+
+**A dead-man's-switch heartbeat** — set `WITNESS_BACKUP_HEARTBEAT_URL` (a
+healthchecks.io-style check) and every successful backup pings it, every failure
+pings `<url>/fail`. The alert is the **absence** of a ping, raised by something
+that is not us. This is the one that survives the machine being destroyed, which
+is exactly when an on-box alert never arrives.
+
+    fly secrets set WITNESS_BACKUP_HEARTBEAT_URL=https://hc-ping.com/<uuid> -a orisan-witness
+
+**`/health` is liveness only and must stay that way.** Fly restarts, then stops
+routing to, a machine that fails its health check. Folding backup freshness into
+`/health` would mean a broken bucket takes the witness offline — and an
+unreachable witness makes every customer's `verify` return exit 2, "cannot
+verify". Degrading the product's core promise because a backup is late is
+strictly worse than a late backup.
 
 ## Out of scope for W1
 
 Multi-tenant auth, billing, key rotation, federation, multiple witnesses,
-transparency-log gossip, off-box backups, horizontal scale. All v2.
+transparency-log gossip, horizontal scale. All v2.

@@ -6,6 +6,7 @@
 
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from 'node:http';
 
+import type { BackupStatus } from './monitor.js';
 import type { WitnessService } from './service.js';
 
 export const MAX_BODY_BYTES = 16 * 1024;
@@ -20,6 +21,8 @@ export const DEFAULT_RATE_LIMIT: RateLimit = { writesPerWindow: 120, windowMs: 6
 
 export interface ServerOptions {
   service: WitnessService;
+  /** Supplies /v1/backup-status. Absent means backups are not managed by this process. */
+  backupStatus?: () => BackupStatus;
   rateLimit?: RateLimit;
   /** Structured log sink; defaults to stdout as one JSON object per line. */
   log?: (entry: Record<string, unknown>) => void;
@@ -86,8 +89,27 @@ export function createApp(opts: ServerOptions): Server {
 
     void (async () => {
       try {
+        // LIVENESS ONLY, and it must stay that way. Fly's http_service check
+        // polls this and will restart — then stop routing to — a machine that
+        // fails it. Folding backup freshness in here would mean a broken
+        // bucket takes the witness offline, and an unreachable witness makes
+        // every customer's verify return exit 2 "cannot verify". A late backup
+        // must never be escalated into an outage. Backup health has its own
+        // endpoint below, which is what an external monitor should poll.
         if (method === 'GET' && (path === '/health' || path === '/healthz')) {
           send(res, 200, { ok: true }); done(200); return;
+        }
+
+        if (method === 'GET' && path === '/v1/backup-status') {
+          if (!opts.backupStatus) {
+            send(res, 503, { ok: false, state: 'not_configured', detail: 'this process does not run backups' });
+            done(503, { alert: true }); return;
+          }
+          const status = opts.backupStatus();
+          send(res, status.ok ? 200 : 503, status);
+          // Every non-ok read is alertable: this endpoint exists to be noticed.
+          done(status.ok ? 200 : 503, status.ok ? {} : { alert: true, state: status.state, detail: status.detail });
+          return;
         }
 
         if (method === 'GET' && path === '/v1/pubkey') {

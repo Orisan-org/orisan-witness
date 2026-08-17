@@ -15,6 +15,22 @@ primary_region = "lhr"
   PORT = "8080"
   WITNESS_DB = "/data/witness.db"
   WITNESS_KEY = "/data/witness-signing.key"
+  # Backups go to Tigris, a different failure domain from the volume above.
+  # `fly storage create` sets AWS_ACCESS_KEY_ID, AWS_SECRET_ACCESS_KEY,
+  # AWS_ENDPOINT_URL_S3, AWS_REGION and BUCKET_NAME as secrets; the service
+  # picks those up with no further configuration. If they are ever missing it
+  # does NOT fall back to writing on the volume — it reports not_configured and
+  # backs up nothing, because a silent fallback would look healthy while
+  # rebuilding the exact single-point-of-failure this replaced.
+  WITNESS_BACKUP_PREFIX = "witness"
+  WITNESS_BACKUP_INTERVAL_MS = "21600000"   # 6h
+  WITNESS_BACKUP_MAX_AGE_SECONDS = "93600"  # 26h: /v1/backup-status turns 503 past this
+
+  # The witness identity must outlive the volume. Set as a secret, not here:
+  #   fly ssh console -a orisan-witness -C "base64 -w0 /data/witness-signing.key" \
+  #     | xargs -0 -I{} fly secrets set WITNESS_KEY_PEM={} -a orisan-witness
+  # Without it, losing the volume loses the signing key, and a restored witness
+  # comes back as a stranger that every pinned client rejects.
 
 [[mounts]]
   source = "witness_data"
@@ -38,6 +54,12 @@ primary_region = "lhr"
     soft_limit = 200
     hard_limit = 400
 
+# LIVENESS ONLY. /health must never take backup state into account: Fly
+# restarts, and then stops routing to, a machine that fails this check, so
+# folding backup freshness in here would turn a late backup into an outage —
+# and an unreachable witness makes every customer's `verify` return exit 2.
+# Backup health lives at /v1/backup-status (503 when stale/failing/unconfigured)
+# and is meant to be polled from OUTSIDE, along with the dead-man heartbeat.
 [[http_service.checks]]
   interval = "30s"
   timeout = "3s"
