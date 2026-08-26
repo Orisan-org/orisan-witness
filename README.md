@@ -77,8 +77,12 @@ Then publish that PEM at a stable URL so auditors can pin it independently.
 
 ### Custom domain
 
-The certificate for `witness.orisan.org` is created. It stays **Not verified**
-until DNS resolves, and the hostname will not serve traffic before then.
+`witness.orisan.org` is **live**: DNS resolves to the Fly app, the certificate
+is issued, and `GET /health` and `GET /v1/pubkey` answer over HTTPS. The
+recorder's `showcase` uses it by default.
+
+The record in place is the CNAME below. The rest of this section is kept as the
+procedure for standing up another hostname.
 
 `orisan.org` is on Namecheap (`dns1/dns2.registrar-servers.com`). Add ONE of
 these in Namecheap → Domain List → Manage → Advanced DNS:
@@ -164,11 +168,20 @@ the history under a fresh key produces a witness that every client rejects with
 `key_mismatch`, because clients pin the key at registration. The rows would all
 be there and be worthless.
 
-So the key belongs in a Fly secret, which lives off the machine:
+So the key belongs in a Fly secret, which lives off the machine. Pipe it to
+`fly secrets import`, which reads stdin — do not use `fly secrets set`, which
+takes the value as an argument and so exposes the private key in `ps` output
+and in shell history:
 
-    fly ssh console -a orisan-witness -C "base64 -w0 /data/witness-signing.key" \
-      | tr -d '\r\n' \
-      | xargs -I{} fly secrets set WITNESS_KEY_PEM={} -a orisan-witness
+    KEY=$(fly ssh console -a orisan-witness \
+            -C "base64 -w0 /data/witness-signing.key" | tr -d '\r\n')
+    [ ${#KEY} -gt 160 ] || { echo "extraction looks truncated; aborting"; return 1; }
+    printf 'WITNESS_KEY_PEM=%s\n' "$KEY" | fly secrets import -a orisan-witness
+    unset KEY
+
+The length guard matters: a truncated extraction would otherwise be stored as
+the identity, and the failure would only surface when clients start rejecting
+the witness.
 
 `WITNESS_KEY_PEM` takes precedence over the file and is never written to disk.
 If both are present and **differ**, the service refuses to start rather than
