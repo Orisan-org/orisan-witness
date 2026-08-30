@@ -12,9 +12,8 @@ cover other Orisan-org repositories (each publishes its own `SECURITY.md`).
 Please report suspected security issues privately. **Do not open a public
 GitHub issue for a vulnerability.**
 
-- **Contact:** TODO — no security contact has been published for this repo yet.
-  Founder to confirm an address (or a private reporting channel) before this
-  file ships.
+- **Contact:** team@orisan.org — published on orisan.org's contact page and
+  site footer.
 - **Please include:** affected version or commit, a minimal reproduction, the
   expected versus actual behavior, and whether checkpoint storage, signature
   verification, or delete/retention handling is implicated.
