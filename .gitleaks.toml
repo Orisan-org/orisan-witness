@@ -1,0 +1,18 @@
+title = "orisan-witness gitleaks config"
+
+[extend]
+useDefault = true
+
+# Known false positive: test/fixtures/fake-s3.ts pins a deliberately fake S3
+# secret access key so the in-memory SigV4 test server has something to sign
+# requests against. It is not a real credential: the base64 value decodes to
+# the literal string "secret-for-tests-only-not-real". Allowlisted by the
+# exact fixture path AND the exact matched string only -- not the whole
+# test/fixtures directory, and not by fingerprint alone.
+[[allowlists]]
+description = "test/fixtures/fake-s3.ts: deliberate fake SigV4 secret for the in-memory S3 test server, decodes to secret-for-tests-only-not-real"
+targetRules = ["generic-api-key"]
+condition = "AND"
+paths = ['''^test/fixtures/fake-s3\.ts$''']
+regexTarget = "match"
+regexes = ['''SECRET = 'c2VjcmV0LWZvci10ZXN0cy1vbmx5LW5vdC1yZWFs'''']
