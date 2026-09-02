@@ -1,0 +1,44 @@
+# test/tigris.live.test.ts is the third leg of the S3 client's proof (see its
+# own header comment): a round-trip against a REAL S3-compatible bucket,
+# where test/s3.test.ts and the fake-s3 fixture only prove the algorithm and
+# the client driving it. It self-skips (describe.skip) when credentials
+# aren't in the environment, which is correct for the push/PR gate in
+# ci.yml — but wrong here: a scheduled job that has quietly been skipping
+# every run because a secret rotated or expired is not a check on a real
+# bucket, it's the appearance of one. This workflow runs the live suite on
+# its own clock and fails, separately from ci.yml, if it skips instead of
+# actually executing. See scripts/assert-live-ran.mjs.
+name: Tigris live
+
+on:
+  schedule:
+    # Once a day. A network-dependent check does not need to gate every push,
+    # but it does need to alarm on its own if the bucket or its credentials
+    # stop working, independent of whether anyone happens to push that day.
+    - cron: '17 6 * * *'
+  workflow_dispatch: {}
+
+jobs:
+  tigris-live:
+    name: real S3-compatible bucket round-trip
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: npm
+
+      - name: Install
+        run: npm ci
+
+      # Fails (rather than reporting a hollow green) if the suite skips for
+      # missing/invalid credentials, not just if it fails outright.
+      - name: Live S3 round-trip actually ran
+        run: node scripts/assert-live-ran.mjs
+        env:
+          AWS_ACCESS_KEY_ID: ${{ secrets.TIGRIS_ACCESS_KEY_ID }}
+          AWS_SECRET_ACCESS_KEY: ${{ secrets.TIGRIS_SECRET_ACCESS_KEY }}
+          AWS_ENDPOINT_URL_S3: ${{ secrets.TIGRIS_ENDPOINT_URL_S3 }}
+          BUCKET_NAME: ${{ secrets.TIGRIS_BUCKET_NAME }}

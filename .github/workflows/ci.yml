@@ -1,0 +1,75 @@
+# The 7 vitest files under test/ (service, db, restore, tigris.live, server,
+# s3, backup) never ran on push or PR before this file existed. This makes
+# that happen for the 6 that need no network; test/tigris.live.test.ts dials
+# a real S3-compatible bucket and has its own schedule instead, see
+# .github/workflows/tigris-live.yml.
+#
+# Modelled on orisan-recorder/.github/workflows/ci.yml: same push/pull_request
+# triggers, same concurrency cancellation, same ubuntu/macos x node 20/22
+# matrix, and the same shape of "a green suite does not prove the suite ran"
+# scope assertion as its assert-witness-ran.mjs / assert-attacks-ran.mjs.
+name: CI
+
+on:
+  push:
+    branches: ['**']
+  pull_request:
+
+# A second push to the same branch cancels the first: CI that lags behind the
+# branch is CI nobody waits for.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  test:
+    name: ${{ matrix.os }} · node ${{ matrix.node }}
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest]
+        # package.json says engines.node >=20. Both ends of the range this
+        # repo actually claims to support are exercised.
+        node: ['20', '22']
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ matrix.node }}
+          cache: npm
+
+      - name: Install
+        run: npm ci
+
+      - name: Typecheck
+        run: npm run typecheck
+
+      - name: Build
+        run: npm run build
+
+      # Everything except test/tigris.live.test.ts, which needs a real
+      # S3-compatible bucket and is gated on a schedule instead (see
+      # .github/workflows/tigris-live.yml). Putting a network call here would
+      # make this gate flaky for reasons that have nothing to do with the
+      # change under review.
+      - name: Full suite (local, no network)
+        run: >
+          npx vitest run
+          test/backup.test.ts test/db.test.ts test/restore.test.ts
+          test/s3.test.ts test/server.test.ts test/service.test.ts
+
+      # A green suite does not establish that these ran: describe.skip is
+      # green, a renamed file is green, a deleted file is greenest of all.
+      # This fails the build if the suite executed zero tests, or if any of
+      # the local test files above was skipped, renamed, or deleted — the
+      # same guard orisan-recorder applies to W1-W5 and the confirmed
+      # attacks, pointed at this repo's own suite instead of a security
+      # review doc. It does not hardcode a count: it enumerates test/ and
+      # checks membership by name, so a rename or deletion is caught by name
+      # rather than by a count that would still match if one file swapped
+      # for another.
+      - name: Scope assertion — every local test file actually ran
+        run: node scripts/assert-suite-ran.mjs
