@@ -3,6 +3,7 @@
   "version": "0.0.0",
   "private": true,
   "description": "External witness for Orisan runtime records: remembers checkpoints the operator can later delete.",
+  "license": "Apache-2.0",
   "type": "module",
   "engines": {
     "node": ">=20"
