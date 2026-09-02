@@ -5,4 +5,11 @@ dist/
 data/
 *.db
 *.db-*
-witness-signing.key
+
+# Secrets. This used to pin only the literal filename witness-signing.key;
+# a glob covers any .env/.pem/.key file dropped anywhere in the tree, not
+# just that one name.
+.env
+.env.*
+*.pem
+*.key
